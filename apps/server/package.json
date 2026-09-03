@@ -1,0 +1,28 @@
+{
+  "name": "@atrium/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env --watch --experimental-strip-types src/index.ts",
+    "build": "tsc --build",
+    "start": "node --env-file-if-exists=../../.env dist/index.js",
+    "clean": "tsc --build --clean"
+  },
+  "dependencies": {
+    "@atrium/shared": "*",
+    "@fastify/cors": "^10.0.2",
+    "fastify": "^5.2.1",
+    "lib0": "^0.2.117",
+    "pg": "^8.13.1",
+    "ws": "^8.21.3",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.32"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@types/ws": "^8.18.1"
+  }
+}

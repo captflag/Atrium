@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: atrium-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: atrium
+      # Development-only credential. Production supplies this from a secret
+      # store, never from a file in the repo (SECURITY.md §4, M0).
+      POSTGRES_PASSWORD: atrium_dev_only
+      POSTGRES_DB: atrium
+    ports:
+      # Bound to loopback so the database is not exposed on the LAN.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - atrium-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atrium -d atrium"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  atrium-pgdata:

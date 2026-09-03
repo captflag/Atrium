@@ -1,0 +1,26 @@
+# Secrets — never commit. SECURITY.md §4 (M0).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-types/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
