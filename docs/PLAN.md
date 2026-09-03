@@ -428,22 +428,30 @@ The Agent SDK spawns a Claude Code subprocess and takes an `env` option, which i
 
 **What stays open:** the `AgentProvider` interface (§4) is kept. Not out of indecision — it is what keeps a local or alternative model viable for the self-hosted framing (§2 B), and it is the seam a future provider swap needs. The bakeoff at M3a is now a narrow verification rather than a comparison: confirm the SDK honours the broker base URL end to end before wiring real work through it.
 
-### Everything else — needs answers before M2
+### Everything else — `ALL DECIDED 2026-09-03`
 
-1. **Auth** — Supabase Auth, or self-rolled sessions? (Leaning Supabase for speed, behind an interface.)
-2. **Repo source** — GitHub OAuth clone only, or also local-folder mount for self-host?
-3. **Agent identity** — do agents get names and avatars? (Strongly yes for the co-presence claim; costs half a day.)
-4. **Canvas scope** — one canvas per workspace, or multiple boards?
-5. **Git strategy** — do agents commit? Branch per agent, or one shared working tree governed by claims? (Claims imply a shared tree; revisit if it hurts.)
+**1. Auth — Supabase Auth**, behind the existing `IdentityProvider` interface. Password reset, session security and MFA are solved problems and are not this project's differentiator. The interface stays so the self-hosted framing (§2 B) can swap in something local.
+*Consequence:* `DevIdentityProvider` is a stub that refuses to construct under `NODE_ENV=production`, so this must land before anyone real uses the app. It is not urgent for M3–M5, which are single-operator work.
+
+**2. Repo source — both.** Clone a public repo by URL, and mount a folder from the operator's own machine.
+*Consequence:* the local-folder path is the higher-risk one. A host path that comes from a request is a directory-traversal bug and a route into any file on the machine (T5). The path must be resolved from server-side config plus the workspace id — exactly as `WorkspaceSandboxes` already does — and a user-supplied folder must be an explicit, operator-level configuration step, never a value in an API call. Local folders also unblock private code today without waiting on the Git proxy (D2, M6).
+
+**3. Agent identity — yes, names and avatars.** Not decoration: claim 1 in §1 is co-presence, and "agent-2 is holding `src/auth/**`" only reads as a colleague if agent-2 is a *someone*. Roughly half a day, and it makes the M4 conflict UI legible.
+
+**4. Canvas scope — one canvas per workspace.** One repo, one room, everyone in the same place — which is the pitch. Multiple boards would split presence, so people could be "in the workspace" and invisible to each other. Addable later without redesign; the workspace id already comes from the URL rather than being assumed unique.
+
+**5. Git strategy — one shared working tree, governed by claims.** Branch-per-agent is safer and more familiar, and that is exactly why it is the wrong choice here: it reduces the problem to ordinary git, removes the differentiator (§1, claim 3), and prevents agents from seeing each other work.
+*Consequence:* the M4 claim protocol and the overlayfs merge gate (§5) are now load-bearing rather than optional, and this is the milestone the project is judged on. Agents do not commit or push in v1 — pushes go through the host-side Git proxy with a branch allowlist and human approval (D2).
 
 ---
 
 ## 11. What to do next
 
-1. Pick a framing from §2 (recommendation: A, built so B is a rename away).
-2. Accept or reject **D1–D5** in [SECURITY.md](./SECURITY.md) §0. D1 and D5 are corrections to this document and are already applied above; D2–D4 are additions.
-3. Answer open decision #5 — it shapes the claim protocol.
-4. Start M0.
+Every open decision is now closed. M0, M1 and M2 are done; M3a's broker is built and D1 is proven.
+
+1. **M3b** — `AgentProvider` over the Claude Agent SDK, agent panes, streaming transcripts.
+2. **One live model call** to finish M3a. Needs an Anthropic key on the broker; nothing else blocks it.
+3. **M4** — claims. The milestone the project is judged on (§10 decision 5).
 
 Security work is scheduled per milestone in [SECURITY.md](./SECURITY.md) §4 rather than deferred to a hardening pass. The M2 and M3 items in particular are cheap now and expensive later — container hardening means rebuilding the sandbox provider if retrofitted, and a key that leaks once has no second chance.
 
