@@ -212,3 +212,101 @@
   font-size: 0.7rem;
   white-space: nowrap;
 }
+
+/* --- terminal panes (M2) ---
+ *
+ * The pane is a plain flex column: chrome at fixed height, xterm taking the
+ * rest. `min-height: 0` on the host is load-bearing — without it a flex item
+ * refuses to shrink below its content and the terminal grows the pane instead
+ * of scrolling inside it.
+ *
+ * Everything here is sized in layout pixels. The canvas's `transform: scale()`
+ * on `.world` scales the rendered result and does not touch layout, so the
+ * terminal's cols/rows stay independent of zoom (see TerminalPane.tsx).
+ */
+
+.pane--terminal .pane__bar {
+  gap: 0.4rem;
+}
+
+.term__phase {
+  font-size: 0.7rem;
+  padding: 0.02rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.term__phase--attached {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.term__phase--offline,
+.term__phase--error {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
+}
+.term__phase--exited {
+  color: var(--degraded);
+  border-color: color-mix(in srgb, var(--degraded) 45%, transparent);
+}
+
+.term__dims,
+.term__viewers {
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.term__host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.35rem 0.2rem 0.35rem 0.5rem;
+  cursor: text;
+  /* xterm paints its own ground from ITheme.background, which is read from
+     --panel; this keeps the padding gutter matching it. */
+  background: var(--panel);
+}
+
+/* xterm.css sizes the terminal from inline styles it sets itself; it only
+   needs the host to be a definite box for the fit addon to measure. */
+.term__host .xterm {
+  height: 100%;
+  padding: 0;
+}
+.term__host .xterm-viewport {
+  /* Thin, theme-aware scrollbar instead of the platform default slab. */
+  scrollbar-width: thin;
+  overflow-y: auto;
+}
+.term__host .xterm .xterm-screen {
+  /* Keep a stray selection highlight from bleeding over the pane's rounding. */
+  overflow: hidden;
+}
+
+.term__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.55rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.term__detail {
+  color: var(--down);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term__hint {
+  padding: 0.02rem 0.35rem;
+  border-radius: 4px;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}

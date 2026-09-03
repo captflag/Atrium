@@ -51,7 +51,13 @@ export interface Room {
   readonly peers: readonly Presence[];
   readonly state: ConnectionState;
   readonly self: { userId: string; name: string; color: string };
-  addPane(kind: PaneKind, x: number, y: number): void;
+  /** `size` defaults to a note-sized pane; a terminal asks for a bigger one. */
+  addPane(
+    kind: PaneKind,
+    x: number,
+    y: number,
+    size?: { readonly width: number; readonly height: number },
+  ): void;
   updatePane(id: string, patch: Partial<Omit<Pane, "id" | "kind">>): void;
   deletePane(id: string): void;
   setCursor(cursor: { x: number; y: number } | null): void;
@@ -246,15 +252,20 @@ export function useRoom(workspaceId: string): Room {
   // --- mutations ----------------------------------------------------------
 
   const addPane = useCallback(
-    (kind: PaneKind, x: number, y: number) => {
+    (
+      kind: PaneKind,
+      x: number,
+      y: number,
+      size?: { readonly width: number; readonly height: number },
+    ) => {
       const id = Math.random().toString(36).slice(2, 12);
       doc.getMap("panes").set(id, {
         id,
         kind,
         x: Math.round(x),
         y: Math.round(y),
-        width: 260,
-        height: 180,
+        width: Math.round(size?.width ?? 260),
+        height: Math.round(size?.height ?? 180),
         text: "",
         updatedBy: identityRef.current.userId,
         updatedAt: Date.now(),

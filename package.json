@@ -18,13 +18,31 @@
     "typecheck": "tsc --build --verbose",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "db:logs": "docker compose logs -f postgres"
+    "db:logs": "docker compose logs -f postgres",
+    "image": "docker build -f docker/workspace.Dockerfile -t atrium/workspace-base:m2 ."
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
     "typescript": "^5.7.3"
   },
+  "comment:allowScripts": [
+    "npm will not run a dependency's install/postinstall script unless it is listed",
+    "here, pinned to an exact version, so a version bump forces a fresh review.",
+    "SECURITY.md T12: an install script is arbitrary code execution on the host,",
+    "which is the machine holding every credential. Grant one only with a reason.",
+    "  esbuild   fetches the platform binary Vite needs. No binary, no build.",
+    "  node-pty  compiles/downloads the native pty addon. Without it, `require`",
+    "            throws at runtime and M2's terminal cannot exist at all.",
+    "  protobufjs dockerode's transitive dep; its postinstall only generates the",
+    "            CJS/ESM wrapper files that ship in the package.",
+    "  ssh2      DENIED. Its install.js is an optional `cpu-features` build for a",
+    "            performance gain on a code path we never take: dockerode pulls",
+    "            ssh2 in for SSH transport to a remote Docker host, and Atrium",
+    "            only ever talks to the local engine over a named pipe."
+  ],
   "allowScripts": {
-    "esbuild@0.25.12": true
+    "esbuild@0.25.12": true,
+    "protobufjs@7.6.6": true,
+    "ssh2@1.17.0": false
   }
 }

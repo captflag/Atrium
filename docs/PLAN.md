@@ -275,9 +275,33 @@ Security M1 items done: **authorization at the HTTP upgrade, before any Yjs byte
 
 Three defects found and fixed during the build: Node's `--experimental-strip-types` rejects TS parameter properties (now banned at compile time via `erasableSyntaxOnly` rather than discovered at runtime); React StrictMode's double-mount closed a still-connecting socket, producing a warning and a spurious reconnect; the toolbar's add button stacked every pane at one point.
 
-### M2 — Sandbox + terminal (1.5 weeks)
+### M2 — Sandbox + terminal (1.5 weeks) — **DONE** — **DONE**
 `SandboxProvider` interface + `LocalDockerProvider`. Clone a repo into a container. Terminal pane over xterm.js + node-pty, streamed via WebSocket. Multiple viewers on one terminal.
 **Done when:** two people watch and type in the same live shell inside the container.
+
+**Status 2026-09-03. Verified by `scripts/probe-terminal.mjs` — 17/17 checks against the running server**, plus a live two-browser check on the canvas. Two viewers attach to one shell and each sees the other's output; a late joiner replays scrollback; the shell runs as non-root `atrium` in the `/workspace` mount; a member of another workspace cannot attach; the shell survives a departing viewer, because sessions are server-owned (§6). M1 does not regress — `/rt` still upgrades and sends Yjs sync step 1.
+
+Built by a 9-agent workflow: one contract agent froze the `SandboxProvider` interface, the terminal wire protocol and all dependencies; three builders worked disjoint files in parallel; an integrator wired them; three adversarial auditors (escape, egress, authz) reviewed the container boundary and a remediator fixed what was real.
+
+**The audit earned its place.** Its one high finding: the `--internal` flag on the egress network — the single D4 control for the workspace container — was *adopted on trust and never verified*. A pre-existing network with the right name but no `Internal` flag would have been a fully routable bridge while the code reported deny-by-default egress. Now the network is inspected by id on every path and the server refuses to start a container rather than silently grant egress. Post-create readback also asserts the container's actual `NetworkMode` and attachment, and removes the container when they do not match.
+
+**What is enforced**, verified by reading it back off the running container: read-only rootfs, `cap-drop=ALL`, no-new-privileges, non-root uid, memory/CPU/PID limits, `nosuid,nodev,noexec` tmpfs, no port bindings, and no Docker socket bind anywhere. A container failing the readback is removed, not run.
+
+**What is not**, reported at runtime in `SandboxHandle.unenforced` and in `/api/health` rather than claimed: `disk-quota` (Docker Desktop's WSL2 store is ext4, so `--storage-opt size=` cannot apply — a container can still fill the host disk through the repo bind mount), `userns-remap`, and `rootless-engine`. The egress allowlist falls back to an `--internal` network with no route off-host; per-host allowlisting needs the filtering proxy described in `EgressPolicy` and does not exist yet. Private repos are unsupported — public HTTPS clone only, until the host-side Git proxy (D2).
+
+`node-pty` was removed after integration: it was in dependencies with a host install-script grant but never imported. The pty runs inside the container via the Docker exec API, which is the point — a host pty would be a shell on the machine that holds every credential.
+
+**Status 2026-09-03. Verified in two browsers on one canvas:** a terminal pane opened a shell in the workspace container, both windows showed the same prompt, each typed a command and both saw both results, and the pane's badge read "2 watching". `whoami` is `atrium` (uid 10001), `touch /etc/nope` fails read-only, and `/sys/fs/cgroup/pids.max` reads 512 — from the browser.
+
+**The pty runs inside the container, not on the host.** `node-pty` is deliberately not used: a host pty is a shell on the machine holding every credential. The pty is a Docker exec with `Tty: true`, and the hijacked stream's bytes go to the wire unmodified.
+
+**Terminal creation is server-side only.** The wire protocol can only *attach*: `subscribe` looks a session up, and lookup is keyed by (workspace, terminal). A terminal is created by an authorized `POST /api/workspaces/:id/terminals` that repeats the upgrade's authenticate + membership check. If a JSON message could spawn a shell, every member would have RCE by sending one.
+
+**Split across four seams, all of which held:** `SandboxProvider` (the contract), `LocalDockerProvider` (the only file that knows what a container id is), `TerminalRegistry`/`TerminalSession` (fan-out, scrollback, backpressure — no Docker), and a `SandboxLocator` the orchestrator implements. The orchestrator is the only place that turns a workspace id into a host path (T5) or decides a container should exist.
+
+Three integration defects found while wiring it: both websocket gateways installed their own `upgrade` listener and Node delivers that event to *all* of them, so the canvas gateway destroyed every terminal socket — both now claim-or-decline and `index.ts` owns one dispatcher; a client that opened its socket before the orchestrator had spawned the shell got a non-retryable `not-found` and stranded the pane, so the pane now ensures the session over HTTP *then* attaches, which also makes a server restart self-healing; and a restart left the previous run's shells alive inside the container with no stream able to reach them (Docker has no "kill exec"), so adopting a container now reaps the pid files a previous run left in its tmpfs.
+
+**Not done here:** hibernate/restore (M5) and `proxyPort` (M6) throw, naming their milestone. Private repositories are not supported — public HTTPS clone only, because no credential enters a container until the Git proxy exists (D2).
 
 ### M3 — First agent (2.5 weeks)
 **M3a — harness bakeoff (0.5 week).** Pick a fixed benchmark task (a two-file change in a real repo). Run two or three candidate harnesses against it inside the M2 container. Score against the rubric in §4. Write down the choice and the reasons; this is the decision deferred from §10.0.

@@ -5,9 +5,15 @@
  * exchanged (SECURITY.md T6): possession of a workspace id is not access.
  * An unauthenticated or non-member upgrade is refused with a status line and
  * the socket destroyed.
+ *
+ * WIRING (changed in M2). This gateway no longer installs its own `upgrade`
+ * listener, and no longer answers for paths it does not own. Node emits
+ * `upgrade` to EVERY listener, so two gateways each destroying the other's
+ * sockets is not a coexistence strategy — `index.ts` runs ONE dispatcher that
+ * offers each request to each gateway's `handleUpgrade` and owns the final
+ * reject. `handleUpgrade` returns true when it has taken the socket.
  */
 
-import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { IdentityProvider, Principal } from "../identity.ts";
@@ -19,7 +25,6 @@ const WORKSPACE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const HEARTBEAT_MS = 30_000;
 
 interface GatewayOptions {
-  readonly server: Server;
   readonly identity: IdentityProvider;
   readonly store: DocStore;
   readonly log: RoomLogger & { info(obj: Record<string, unknown>, msg: string): void };
@@ -35,19 +40,38 @@ export class RealtimeGateway {
 
   constructor(options: GatewayOptions) {
     this.#options = options;
-    options.server.on("upgrade", (req, socket, head) => {
-      void this.#handleUpgrade(req, socket, head);
-    });
   }
 
   get roomCount(): number {
     return this.#rooms.size;
   }
 
-  async #handleUpgrade(
+  /**
+   * First refusal on an http `upgrade`.
+   *
+   * Returns true when this gateway has CLAIMED the socket — the caller must
+   * then not touch it again, not even to reject it, because authorization
+   * continues on a promise. Returns false when the path is not ours and the
+   * socket is untouched, which is what lets the terminal gateway and this one
+   * share a server.
+   */
+  handleUpgrade(req: import("node:http").IncomingMessage, socket: Duplex, head: Buffer): boolean {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    } catch {
+      return false;
+    }
+    if (url.pathname !== "/rt") return false;
+    void this.#authorize(req, socket, head, url);
+    return true;
+  }
+
+  async #authorize(
     req: import("node:http").IncomingMessage,
     socket: Duplex,
     head: Buffer,
+    url: URL,
   ): Promise<void> {
     const reject = (status: string): void => {
       socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
@@ -55,9 +79,6 @@ export class RealtimeGateway {
     };
 
     try {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      if (url.pathname !== "/rt") return reject("404 Not Found");
-
       // Browsers always send Origin on a websocket handshake; a missing or
       // unlisted one is not a browser we invited.
       const origin = req.headers.origin;

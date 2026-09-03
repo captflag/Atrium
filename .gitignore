@@ -6,6 +6,10 @@
 *.key
 id_rsa*
 
+# Workspace checkouts (M2). One directory per workspace, bind-mounted into its
+# container. Cloned repos and whatever an agent writes; never Atrium's own code.
+.atrium/
+
 # Dependencies
 node_modules/
 

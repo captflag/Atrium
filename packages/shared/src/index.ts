@@ -6,6 +6,7 @@
  */
 
 export * from "./pane.ts";
+export * from "./terminal.ts";
 
 export type ComponentStatus = "ok" | "degraded" | "down";
 

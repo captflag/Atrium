@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Pane } from "@atrium/shared";
+import type { Pane, PaneKind } from "@atrium/shared";
 import { PANE_MIN_SIZE } from "@atrium/shared";
 import { useRoom } from "./useRoom.ts";
 import { PaneView } from "./PaneView.tsx";
@@ -150,6 +150,28 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
     [toCanvas],
   );
 
+  /**
+   * Drop a pane into the middle of what the user is actually looking at,
+   * cascaded so repeated clicks do not stack panes on one point. A terminal
+   * asks for more room than a note: 80 columns of monospace in a 260px pane is
+   * a shell you cannot read.
+   */
+  const addPaneInView = useCallback(
+    (kind: PaneKind, width: number, height: number) => {
+      const rect = surfaceRef.current?.getBoundingClientRect();
+      const center = toCanvas(
+        (rect?.left ?? 0) + (rect?.width ?? 800) / 2,
+        (rect?.top ?? 0) + (rect?.height ?? 600) / 2,
+      );
+      const step = (room.panes.length % 6) * 28;
+      room.addPane(kind, center.x - width / 2 + step, center.y - height / 2 + step, {
+        width,
+        height,
+      });
+    },
+    [room, toCanvas],
+  );
+
   const startResize = useCallback(
     (pane: Pane, event: React.PointerEvent) => {
       const point = toCanvas(event.clientX, event.clientY);
@@ -171,17 +193,8 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
         room={room}
         zoom={viewport.zoom}
         onResetView={() => setViewport({ x: 0, y: 0, zoom: 1 })}
-        onAddNote={() => {
-          // Drop into the middle of what the user is actually looking at,
-          // cascaded so repeated clicks do not stack panes on top of each other.
-          const rect = surfaceRef.current?.getBoundingClientRect();
-          const center = toCanvas(
-            (rect?.left ?? 0) + (rect?.width ?? 800) / 2,
-            (rect?.top ?? 0) + (rect?.height ?? 600) / 2,
-          );
-          const step = (room.panes.length % 6) * 28;
-          room.addPane("note", center.x - 130 + step, center.y - 90 + step);
-        }}
+        onAddNote={() => addPaneInView("note", 260, 180)}
+        onAddTerminal={() => addPaneInView("terminal", 560, 340)}
       />
 
       <div
@@ -210,6 +223,8 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
             <PaneView
               key={pane.id}
               pane={pane}
+              workspaceId={workspaceId}
+              zoom={viewport.zoom}
               selected={pane.id === selected}
               onSelect={() => setSelected(pane.id)}
               onStartMove={(e) => startMove(pane, e)}
@@ -237,11 +252,13 @@ function Toolbar({
   zoom,
   onResetView,
   onAddNote,
+  onAddTerminal,
 }: {
   room: ReturnType<typeof useRoom>;
   zoom: number;
   onResetView: () => void;
   onAddNote: () => void;
+  onAddTerminal: () => void;
 }): React.ReactElement {
   const label =
     room.state === "connected"
@@ -273,6 +290,14 @@ function Toolbar({
       </button>
       <button type="button" onClick={onAddNote}>
         Add note
+      </button>
+      {/*
+        Adding the pane is all this does. The shell itself is opened by the
+        server when the pane mounts and asks for it over an authorized route —
+        a client cannot spawn a process by writing to the shared document.
+      */}
+      <button type="button" onClick={onAddTerminal}>
+        Add terminal
       </button>
     </header>
   );
