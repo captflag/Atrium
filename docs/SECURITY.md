@@ -86,7 +86,7 @@ If the credential is reachable from the container, one `env`, one `/proc/*/envir
 
 **Transport, settled empirically (2026-09-03).** The broker is a **sidecar container**, not a host process. On Docker Desktop for Windows the engine runs in a WSL2 VM, so a workspace container cannot reach a Windows process at the bridge gateway — measured `ECONNREFUSED` against a live listener, versus `ENETUNREACH` for the internet. Container-to-container on `atrium-internal` works with DNS by name. The broker therefore joins `atrium-internal` (where the workspace can reach it, and it is the only reachable thing) plus a second egress-capable network for the provider call. See PLAN.md §4.
 
-**This is a hard requirement on the M3a bakeoff.** A harness that insists on reading a provider key from its own environment, with no way to point it at a local base URL, fails the rubric — it cannot satisfy D1. Verify the base-URL override works before selecting a candidate, not after.
+**Requirement met by the chosen harness (2026-09-03).** The rubric demanded a harness pointable at a local endpoint. Claude Code — which the Claude Agent SDK runs as a subprocess — supports `ANTHROPIC_BASE_URL` for exactly this, and Anthropic's own guidance for that mode is that the provider key stays server-side while the client holds only a gateway credential. The broker sidecar **is** an LLM gateway in that sense. The workspace container receives `ANTHROPIC_BASE_URL` and a short-lived workspace-scoped credential, never the real key. Prove it end to end at M3a before real work flows through it — a base URL that is set but not honoured fails silently and open.
 
 The broker is also the natural place for: per-session token budgets, spend caps, request logging, and the transcript redaction in T9.
 

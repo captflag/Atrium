@@ -138,7 +138,7 @@ Implementations: `LocalDockerProvider` (v1, dev + self-host), and later `E2BProv
 
 **Datastore.** Postgres. Supabase is a reasonable managed choice (auth + DB + storage in one, generous free tier), but the schema must not depend on Supabase-specific features, so self-hosting stays possible.
 
-**Agents — provider deliberately undecided.** Which coding-agent harness and which model runs inside the container is **an open decision, deferred to before M3** (see §10.0). Nothing in this design depends on the answer.
+**Agents — Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`), decided 2026-09-03 (§10.0). It still sits behind the `AgentProvider` interface below, which is what keeps a local or alternative model viable for the self-hosted framing (§2 B).
 
 The agent layer sits behind an interface, exactly like the sandbox:
 
@@ -318,7 +318,7 @@ Three integration defects found while wiring it: both websocket gateways install
 **Not done here:** hibernate/restore (M5) and `proxyPort` (M6) throw, naming their milestone. Private repositories are not supported — public HTTPS clone only, because no credential enters a container until the Git proxy exists (D2).
 
 ### M3 — First agent (2.5 weeks)
-**M3a — harness bakeoff (0.5 week).** Pick a fixed benchmark task (a two-file change in a real repo). Run two or three candidate harnesses against it inside the M2 container. Score against the rubric in §4. Write down the choice and the reasons; this is the decision deferred from §10.0.
+**M3a — harness verification (0.5 week).** The comparison is settled (§10.0): Claude Agent SDK on `claude-opus-5`. What remains is the check that mattered most in the rubric — stand up the broker sidecar, point the SDK at it with `ANTHROPIC_BASE_URL`, and prove end to end that a real task completes with **no credential anywhere in the workspace container**. Verify before wiring real work through it, not after.
 
 **M3b — integration (2 weeks).** `AgentProvider` implemented for the winner, running inside the container and bound to an agent pane. Streaming transcript with tool calls rendered. Interrupt/stop. BYO credentials, held by the host-side broker and never present in the container *(D1)*.
 
@@ -349,18 +349,21 @@ The harness bakeoff sits at M3a rather than at the start because it needs the M2
 
 ## 8. Cost model
 
-Model and provider are undecided (§4, §10.0), so this section states the **shape** of the cost rather than a number. The shape holds for every candidate provider; plug in real rates after the M3a bakeoff.
+Provider is decided (§10.0), so these are real rates. Anthropic API, per million tokens:
 
-### Inference cost — the part that is provider-independent
+| Model | Model ID | Input | Output | Used for |
+|---|---|---|---|---|
+| Claude Opus 5 | `claude-opus-5` | $5.00 | $25.00 | Coding agents |
+| Claude Haiku 4.5 | `claude-haiku-4-5` | $1.00 | $5.00 | Mechanical background work |
 
-Frontier coding models sit roughly in the **$1–$10 per million input tokens / $5–$50 per million output tokens** band. Open-weight models run on your own hardware move the cost from per-token to per-hour, but do not remove it.
+Claude Sonnet 5 (`claude-sonnet-5`, $2/$10) sits between them and is the obvious step-down to measure if Opus proves more than a route needs. Do not assume it — measure cost per *completed task*, not per request.
 
-Four levers, in descending order of impact. All four apply regardless of provider:
+### The four levers, in descending order of impact
 
-1. **Prompt caching / prefix reuse.** An agent session resends a large stable prefix (system prompt, tool definitions, repo context) on every turn. Reusing it is the single largest saving available and costs nothing in quality. Most hosted providers support this; **whether a candidate supports it is a scoring criterion in the M3a bakeoff.**
+1. **Prompt caching.** An agent session resends a large stable prefix (system prompt, tool definitions, repo context) on every turn. Caching it is the single largest saving available and costs nothing in quality. The broker sidecar is the right place to confirm it is working: watch `usage.cache_read_input_tokens`, and treat a persistent zero as a silent invalidator, not as absence of the feature.
 2. **Cost per completed task, not per request.** A cheaper model that needs three attempts is not cheaper. Benchmark on the M3a task and compare total spend to green, not sticker price.
 3. **Tiering.** Strong model for coding agents; a small, cheap model for mechanical background work (summarising a transcript, naming a pane). Roughly a 5× spread between tiers at most providers.
-4. **Reasoning depth / effort**, where the provider exposes it. Higher for coding, lower for background subagents.
+4. **Effort.** `high` or `xhigh` for coding and long-horizon agent work, `low` for background subagents. On current models this matters more than it used to — re-tune per route rather than setting one global value.
 
 ### Hosting cost
 
@@ -368,7 +371,7 @@ One small container per active workspace. At roughly $0.01/hr with aggressive hi
 
 ### The decision that actually controls exposure
 
-**BYO credentials.** In the recommended framing (§2), users supply their own provider key or point at their own endpoint, and the inference bill is not yours. Hosting is then the only cost you carry, and hibernation controls it. This holds whichever provider wins, which is another reason the choice can safely stay open.
+**BYO credentials.** In the recommended framing (§2), users supply their own Anthropic key to the broker, and the inference bill is not yours — hosting is the only cost you carry, and hibernation controls it. The broker is also where per-session token budgets and spend caps are enforced, so a runaway agent loop cannot quietly drain someone's account (SECURITY.md T10).
 
 **Rough hosting cost, hosted variant:** one small container per active workspace. At roughly $0.01/hr with aggressive hibernation, 50 workspaces averaging 2 active hours/day is on the order of $30/month. That is affordable; the model bill is what is not — hence BYO key.
 
@@ -396,18 +399,26 @@ Stop and reassess if, by the end of M3, an agent cannot reliably complete a two-
 
 ## 10. Open decisions
 
-### 10.0 — Agent harness and model provider `DEFERRED BY DECISION`
+### 10.0 — Agent harness and model provider `DECIDED 2026-09-03`
 
-**Status: deliberately open. Decide at M3a, not before.**
+**Decided: Anthropic Claude, via the Claude Agent SDK.**
 
-Neither the coding-agent harness nor the model provider is chosen. This is a decision, not an omission. The design absorbs it as follows:
+| Choice | Value |
+|---|---|
+| Provider | Anthropic (user's decision) |
+| Harness | **Claude Agent SDK** — `@anthropic-ai/claude-agent-sdk`, entry point `query()` |
+| Primary coding agents | `claude-opus-5` |
+| Mechanical background work | `claude-haiku-4-5` |
 
-- `AgentProvider` interface isolates the harness (§4).
-- Claim enforcement is at the filesystem, so it works with harnesses that offer no tool-call gate (§5).
-- The credential broker is provider-agnostic — it holds whatever key or endpoint config the winner needs (D1).
-- Cost is expressed as shape, not rates (§8).
+**Why the Agent SDK over a hand-rolled loop.** It is Claude Code as a library: the agent loop, context management, and built-in Read/Write/Edit/Bash/Glob/Grep tools already exist. Rebuilding those is not this product — the room around the agent is. It also supplies `hooks` (including `PreToolUse`) and a `canUseTool` permission callback, which is where the advisory half of the claim protocol lands (§5, layer 1).
 
-**Nothing before M3a depends on the answer.** M0 through M2 are unaffected. Revisit only if the bakeoff shows every candidate failing a rubric requirement in §4 — that would be a signal to hand-roll a loop, which is the fallback, not the plan.
+**Model choice is per-need, not one model everywhere.** Coding agents run `claude-opus-5`: agent quality *is* the product's experience, and a cheaper model that needs three attempts is not cheaper. Genuinely mechanical work — summarising a transcript, naming a pane — runs `claude-haiku-4-5` at roughly a fifth the price. Effort stays high for coding and drops to low for background subagents. Revisit per route with measurement, never by guessing.
+
+**D1 is satisfied, and by a documented vendor pattern rather than a workaround.** The rubric's hard requirement (SECURITY.md T2) was that the harness must be pointable at a local endpoint so the container never holds a credential. Claude Code supports exactly this: `ANTHROPIC_BASE_URL` points it at a gateway, and Anthropic's own guidance for that mode is that *"the provider key stays server-side; developers hold gateway credentials instead."* The D1 broker sidecar **is** an LLM gateway. The workspace container gets `ANTHROPIC_BASE_URL` plus a short-lived workspace-scoped credential, and never the real key.
+
+The Agent SDK spawns a Claude Code subprocess and takes an `env` option, which is how those two values reach it. That subprocess runs *inside* the workspace container, so anything in its environment is readable by the agent — which is precisely why only the base URL and a scoped token go there.
+
+**What stays open:** the `AgentProvider` interface (§4) is kept. Not out of indecision — it is what keeps a local or alternative model viable for the self-hosted framing (§2 B), and it is the seam a future provider swap needs. The bakeoff at M3a is now a narrow verification rather than a comparison: confirm the SDK honours the broker base URL end to end before wiring real work through it.
 
 ### Everything else — needs answers before M2
 
