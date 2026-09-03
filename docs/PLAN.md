@@ -318,7 +318,15 @@ Three integration defects found while wiring it: both websocket gateways install
 **Not done here:** hibernate/restore (M5) and `proxyPort` (M6) throw, naming their milestone. Private repositories are not supported — public HTTPS clone only, because no credential enters a container until the Git proxy exists (D2).
 
 ### M3 — First agent (2.5 weeks)
-**M3a — harness verification (0.5 week).** The comparison is settled (§10.0): Claude Agent SDK on `claude-opus-5`. What remains is the check that mattered most in the rubric — stand up the broker sidecar, point the SDK at it with `ANTHROPIC_BASE_URL`, and prove end to end that a real task completes with **no credential anywhere in the workspace container**. Verify before wiring real work through it, not after.
+**M3a — harness verification (0.5 week) — BROKER DONE, live call pending a key.** The comparison is settled (§10.0): Claude Agent SDK on `claude-opus-5`. What remains is the check that mattered most in the rubric — stand up the broker sidecar, point the SDK at it with `ANTHROPIC_BASE_URL`, and prove end to end that a real task completes with **no credential anywhere in the workspace container**. Verify before wiring real work through it, not after.
+
+**Status 2026-09-03.** The broker sidecar is built (`apps/broker`, `docker/broker.Dockerfile`) and **D1 is proven by `scripts/probe-broker.mjs` — 9/9**, using a *fake* credential so no real key is needed or at risk. Asserted, not assumed: the workspace container's environment holds no provider credential (only `ANTHROPIC_BASE_URL` and a scoped capability token); a request without the token is refused; a non-allowlisted path is refused, so the broker is not an open proxy inside the trust boundary; the broker injects the real credential upstream; and the session token budget refuses the call that crosses the ceiling.
+
+The broker ships **zero npm dependencies** on purpose — it is the process that holds the credential, so its supply chain is the one that matters (T12). It runs non-root, read-only, `cap-drop=ALL`.
+
+**Two bugs caught by the probe, both mine, both fixed.** The capability token was being forwarded upstream: scoped and useless to the recipient, but a credential leaving the boundary it belongs to is a leak regardless, and the probe now asserts it never happens. Separately, the broker's own guard refused to forward a credential over plaintext to a non-local host — it fired on the test harness, which is the guard working; the fixture was renamed rather than the guard weakened.
+
+**What M3a still owes:** one live call against the real API. That needs an Anthropic key, which the project does not have. Nothing else blocks — set `ATRIUM_UPSTREAM_API_KEY` on the broker and point `ATRIUM_UPSTREAM_ORIGIN` at `https://api.anthropic.com`. Until then the boundary is proven and the model call is not.
 
 **M3b — integration (2 weeks).** `AgentProvider` implemented for the winner, running inside the container and bound to an agent pane. Streaming transcript with tool calls rendered. Interrupt/stop. BYO credentials, held by the host-side broker and never present in the container *(D1)*.
 
