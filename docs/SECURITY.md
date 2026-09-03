@@ -84,6 +84,8 @@ If the credential is reachable from the container, one `env`, one `/proc/*/envir
 
 **Mitigation (D1).** Invert the direction. The agent runner in the container does not call the model provider directly. It sends the request over a Unix socket to a **broker on the host**; the broker attaches the credential and makes the call. The container holds a short-lived, workspace-scoped capability token that is useless elsewhere.
 
+**Transport, settled empirically (2026-09-03).** The broker is a **sidecar container**, not a host process. On Docker Desktop for Windows the engine runs in a WSL2 VM, so a workspace container cannot reach a Windows process at the bridge gateway — measured `ECONNREFUSED` against a live listener, versus `ENETUNREACH` for the internet. Container-to-container on `atrium-internal` works with DNS by name. The broker therefore joins `atrium-internal` (where the workspace can reach it, and it is the only reachable thing) plus a second egress-capable network for the provider call. See PLAN.md §4.
+
 **This is a hard requirement on the M3a bakeoff.** A harness that insists on reading a provider key from its own environment, with no way to point it at a local base URL, fails the rubric — it cannot satisfy D1. Verify the base-URL override works before selecting a candidate, not after.
 
 The broker is also the natural place for: per-session token budgets, spend caps, request logging, and the transcript redaction in T9.

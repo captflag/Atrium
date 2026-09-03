@@ -113,9 +113,13 @@ export const LABEL_CREATED_AT = "dev.atrium.created-at";
  * The `--internal` bridge every non-"none" sandbox joins.
  *
  * `Internal: true` means the daemon installs no NAT masquerade rule, so packets
- * to the internet are dropped in the kernel. The container can still reach the
- * bridge gateway, which is where the host-side model broker (D1) and Git proxy
- * (D2) will listen from M3b.
+ * to the internet are dropped in the kernel (measured: `ENETUNREACH`).
+ *
+ * The brokers (D1, D2) attach to THIS network as sidecar containers and are
+ * reached by name over Docker's embedded DNS. They are NOT host processes on
+ * the bridge gateway: Docker Desktop runs the engine in a WSL2 VM, so the
+ * gateway belongs to the VM and a Windows listener is unreachable from here
+ * (measured: `ECONNREFUSED` against a live listener). See PLAN.md §4.
  */
 export const INTERNAL_NETWORK_NAME = "atrium-internal";
 
@@ -1054,9 +1058,9 @@ export class LocalDockerProvider implements SandboxProvider {
             Name: INTERNAL_NETWORK_NAME,
             Driver: "bridge",
             // The whole point: no NAT masquerade rule, so packets to the
-            // internet are dropped in the kernel. The gateway is still
-            // reachable, which is where the host-side brokers will listen from
-            // M3b (D1, D2).
+            // internet are dropped in the kernel. The brokers (D1, D2) join
+            // this same network as sidecar containers from M3b and are reached
+            // by name — not on the gateway, which lives in the WSL2 VM.
             Internal: true,
             Attachable: false,
             EnableIPv6: false,

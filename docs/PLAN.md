@@ -96,6 +96,20 @@ Browser (React + Vite + TS)
                                  |- egress deny-by-default      (D4)
 ```
 
+**Where the brokers actually run (established empirically, 2026-09-03).** The model broker (D1) and Git proxy (D2) are drawn above on the host side, and M2's code left comments saying they would listen on the `atrium-internal` bridge gateway. **That is wrong on Docker Desktop for Windows and was never tested.** Measured from a workspace container on `atrium-internal`:
+
+| Target | Result | Meaning |
+|---|---|---|
+| `https://1.1.1.1` | `ENETUNREACH` | D4 holds — no route off-host, enforced in the kernel |
+| bridge gateway `172.19.0.1:<port>`, live Windows listener | `ECONNREFUSED` | packets reach the gateway **inside the WSL2 VM**; a Windows host process is not there and never will be |
+| another container on `atrium-internal`, by name | **reachable** | container-to-container works, with Docker's embedded DNS |
+
+Docker Desktop runs the engine inside a WSL2 VM, so "the host" the container can see is the VM, not Windows. A broker running as a Node process on Windows is unreachable from a workspace container by design, not by misconfiguration.
+
+**Therefore the brokers are sidecar containers, not host processes.** Each attaches to two networks: `atrium-internal`, where workspace containers reach it by name and it is the only thing they can reach; and a second egress-capable network it uses to reach the model provider or GitHub. The workspace container keeps zero route off-host.
+
+This is *better* than the host-process design, not a concession. The credential now lives in a container the workspace container cannot exec into, cannot share a namespace with, and can only address over one TCP port — a stronger boundary than a Unix socket on a shared host. D1 and D2 are unchanged in substance: no credential ever enters the workspace container.
+
 **The container is semi-hostile by design.** It runs model-generated commands and arbitrary `npm install` scripts over attacker-influenceable input. Every credential stays on the host side of that boundary; the container gets short-lived, workspace-scoped capability tokens instead. Rationale and threat model in [SECURITY.md](./SECURITY.md) §1.
 
 ### Component notes
