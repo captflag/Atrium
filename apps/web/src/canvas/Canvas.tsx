@@ -10,6 +10,8 @@ import { PANE_MIN_SIZE } from "@atrium/shared";
 import { useRoom } from "./useRoom.ts";
 import { PaneView } from "./PaneView.tsx";
 import { Cursors } from "./Cursors.tsx";
+import { deleteAgent } from "./agentApi.ts";
+import { closeTerminal } from "./terminalApi.ts";
 import "./canvas.css";
 
 const ZOOM_MIN = 0.25;
@@ -125,6 +127,37 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
     [room, toCanvas],
   );
 
+  /** Remove a pane from the shared document. The pane component has already
+   *  ended whatever it owned server-side by the time this runs. */
+  const deletePane = useCallback(
+    (paneId: string) => {
+      room.deletePane(paneId);
+      setSelected(null);
+    },
+    [room],
+  );
+
+  /**
+   * The keyboard delete path, which has no pane component to do its cleanup.
+   *
+   * Sessions are SERVER-OWNED (PLAN.md §6): nothing else ever ends them. The
+   * close button works because `PaneView` wraps it with `closeTerminal`, and
+   * `AgentPane` calls `deleteAgent` itself — but this shortcut bypassed both
+   * and left a running shell, and would now leave an agent session that keeps
+   * working and keeps spending. So it repeats the same teardown here. Both
+   * calls are idempotent, so a pane that somehow arrives through both paths
+   * costs one redundant DELETE and nothing else.
+   */
+  const deletePaneWithTeardown = useCallback(
+    (paneId: string) => {
+      const pane = room.panes.find((p) => p.id === paneId);
+      if (pane?.kind === "terminal") void closeTerminal(workspaceId, pane.id);
+      if (pane?.kind === "agent") void deleteAgent(workspaceId, pane.id);
+      deletePane(paneId);
+    },
+    [room, workspaceId, deletePane],
+  );
+
   // Delete removes the selected pane, unless a text field has focus.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -133,13 +166,12 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
       if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
-        room.deletePane(selected);
-        setSelected(null);
+        deletePaneWithTeardown(selected);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selected, room]);
+  }, [selected, deletePaneWithTeardown]);
 
   const startMove = useCallback(
     (pane: Pane, event: React.PointerEvent) => {
@@ -195,6 +227,9 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
         onResetView={() => setViewport({ x: 0, y: 0, zoom: 1 })}
         onAddNote={() => addPaneInView("note", 260, 180)}
         onAddTerminal={() => addPaneInView("terminal", 560, 340)}
+        // 480x460 is the smallest size where the transcript, the composer and
+        // the three controls all fit without the composer eating the transcript.
+        onAddAgent={() => addPaneInView("agent", 480, 460)}
       />
 
       <div
@@ -230,10 +265,7 @@ export function Canvas({ workspaceId }: { workspaceId: string }): React.ReactEle
               onStartMove={(e) => startMove(pane, e)}
               onStartResize={(e) => startResize(pane, e)}
               onChangeText={(text) => room.updatePane(pane.id, { text })}
-              onDelete={() => {
-                room.deletePane(pane.id);
-                setSelected(null);
-              }}
+              onDelete={() => deletePane(pane.id)}
             />
           ))}
           <Cursors peers={room.peers} zoom={viewport.zoom} />
@@ -253,12 +285,14 @@ function Toolbar({
   onResetView,
   onAddNote,
   onAddTerminal,
+  onAddAgent,
 }: {
   room: ReturnType<typeof useRoom>;
   zoom: number;
   onResetView: () => void;
   onAddNote: () => void;
   onAddTerminal: () => void;
+  onAddAgent: () => void;
 }): React.ReactElement {
   const label =
     room.state === "connected"
@@ -298,6 +332,15 @@ function Toolbar({
       */}
       <button type="button" onClick={onAddTerminal}>
         Add terminal
+      </button>
+      {/*
+        Adding the pane is ALL this does. No session exists — and no token is
+        spent — until a human types a task and presses Start, which goes through
+        the authorized POST route. A button that started an agent would make
+        "spend money and write to the repo" a click with no sentence attached.
+      */}
+      <button type="button" onClick={onAddAgent}>
+        Add agent
       </button>
     </header>
   );

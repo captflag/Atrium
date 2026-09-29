@@ -310,3 +310,412 @@
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* --- agent panes (M3b) ---
+ *
+ * Same flex column as a terminal pane: fixed chrome top and bottom, the
+ * transcript taking the rest. `min-height: 0` on the scroller is load-bearing —
+ * without it a flex item refuses to shrink below its content and the transcript
+ * grows the pane instead of scrolling inside it.
+ *
+ * Everything is expressed in the theme variables (--panel, --border, --text,
+ * --muted, --accent, --ok, --degraded, --down), so light and dark both work
+ * without a second block. The one colour that is NOT a variable is the agent's
+ * avatar background, which is a server-assigned palette literal set inline —
+ * see the note in AgentPane.tsx.
+ */
+
+.pane--agent .pane__bar {
+  gap: 0.4rem;
+}
+
+.agent__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.agent__avatar {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.agent__name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 8rem;
+}
+
+.agent__phase {
+  font-size: 0.7rem;
+  padding: 0.02rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.agent__phase--ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.agent__phase--busy {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.agent__phase--warn {
+  color: var(--degraded);
+  border-color: color-mix(in srgb, var(--degraded) 45%, transparent);
+}
+.agent__phase--down {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
+}
+
+.agent__model,
+.agent__viewers {
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* --- transcript --- */
+
+.agent__transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.45rem 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  scrollbar-width: thin;
+  background: var(--panel);
+}
+
+.agent__idlehint {
+  margin: 0.4rem 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* A gap in what the reader is being shown. Says so; never rendered as if the
+   transcript were complete. */
+.agent__gap {
+  margin: 0;
+  padding: 0.25rem 0.45rem;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.agent__gap--warn {
+  color: var(--degraded);
+  border-color: color-mix(in srgb, var(--degraded) 45%, transparent);
+}
+
+/* Agent prose. `pre-wrap` keeps the agent's own line breaks without any parser
+   touching the string; `overflow-wrap` stops a 400-character path widening the
+   pane. This element holds a text child and nothing else. */
+.agent__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.agent__say {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.agent__say--sub {
+  border-left-style: dashed;
+}
+
+.agent__subtag {
+  align-self: flex-start;
+  padding: 0 0.28rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+/* A caret while a message is still streaming. Purely decorative. */
+.agent__caret {
+  width: 0.45rem;
+  height: 0.85rem;
+  background: var(--accent);
+  opacity: 0.6;
+  animation: agent-blink 1.1s steps(2, start) infinite;
+}
+@keyframes agent-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent__caret {
+    animation: none;
+  }
+}
+
+.agent__thinking {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.agent__thinking > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.agent__thinking .agent__body {
+  margin-top: 0.2rem;
+  padding-left: 0.5rem;
+  border-left: 2px dotted var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* --- tool calls --- */
+
+.agent__tool {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.agent__tool > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.22rem 0.4rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.agent__tool--error {
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
+}
+.agent__tool--denied {
+  border-color: color-mix(in srgb, var(--degraded) 50%, transparent);
+}
+
+.agent__toolName {
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* The target is agent-chosen text (usually a path). Truncated for layout only
+   — it is a text child either way. */
+.agent__toolTarget {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent__toolStatus {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.agent__tool--error .agent__toolStatus {
+  color: var(--down);
+}
+.agent__tool--denied .agent__toolStatus {
+  color: var(--degraded);
+}
+.agent__tool--ok .agent__toolStatus {
+  color: var(--ok);
+}
+
+.agent__toolLabel {
+  margin: 0.25rem 0.4rem 0.1rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+/* Tool input and output. A styled <pre> holding a text child is how code is
+   made to LOOK like code here — there is deliberately no highlighter and no
+   markdown step (SECURITY.md T1; see AgentPane.tsx). */
+.agent__pre {
+  margin: 0 0.4rem 0.35rem;
+  padding: 0.35rem 0.45rem;
+  max-height: 14rem;
+  overflow: auto;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+/* --- chrome lines: harness notices, errors, done ---
+ *
+ * Deliberately unlike `.agent__say`: a tagged, bordered strip rather than
+ * flowing prose. If the two looked alike, an injected agent could forge a
+ * system message by emitting text that reads like one (agent.ts). */
+
+.agent__chrome {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  font-size: 0.73rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.agent__chromeTag {
+  flex: none;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.agent__chrome--warn {
+  color: var(--degraded);
+  border-color: color-mix(in srgb, var(--degraded) 45%, transparent);
+}
+.agent__chrome--error {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
+}
+
+.agent__done {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* --- composer --- */
+
+.agent__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.agent__input {
+  width: 100%;
+  padding: 0.35rem 0.45rem;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  resize: none;
+  outline: none;
+}
+.agent__input:focus {
+  border-color: var(--accent);
+}
+
+.agent__controls {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.agent__btn {
+  padding: 0.2rem 0.6rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.agent__btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.agent__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.agent__btn--go {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.agent__btn--stop:hover:not(:disabled) {
+  border-color: var(--down);
+  color: var(--down);
+}
+
+/* --- status strip --- */
+
+.agent__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.55rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.agent__detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--degraded);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent__usage {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* A persistent zero here is a silent cache invalidator, which is the largest
+   cost lever in PLAN.md §8 — so it is coloured, not hidden. */
+.agent__cache--cold {
+  color: var(--degraded);
+}

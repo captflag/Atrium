@@ -6,6 +6,15 @@
  * cannot exec into or share a namespace with (SECURITY.md D1, T3).
  */
 
+/**
+ * Container hostnames of the probe's stub upstreams.
+ *
+ * Exact names, never a prefix: a plaintext upstream is only tolerable because
+ * these are unroutable single-label names on an internal Docker network, and a
+ * prefix match would let a typo'd real host through carrying the credential.
+ */
+const PROBE_STUB_HOSTS = new Set(["upstream-stub", "upstream-sse-stub"]);
+
 function required(name: string): string {
   const v = process.env[name];
   if (v === undefined || v === "") {
@@ -51,7 +60,10 @@ export function loadBrokerConfig(): BrokerConfig {
     parsed.hostname === "127.0.0.1" ||
     parsed.hostname === "localhost" ||
     parsed.hostname.endsWith(".local") ||
-    parsed.hostname === "upstream-stub";
+    // The stub upstreams stood up by scripts/probe-broker.mjs, by exact name.
+    // `upstream-sse-stub` is the streaming one, which is the shape a real agent
+    // produces and therefore the one the token ledger has to be proven against.
+    PROBE_STUB_HOSTS.has(parsed.hostname);
   if (parsed.protocol !== "https:" && !isLocalStub) {
     throw new Error(
       `ATRIUM_UPSTREAM_ORIGIN must be https:// for a non-local host, got ${parsed.protocol}//${parsed.hostname}`,

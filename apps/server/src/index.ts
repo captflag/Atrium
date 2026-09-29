@@ -4,9 +4,13 @@ import { rollUp, TERMINAL_ID_RE, type HealthCheck, type HealthResponse } from "@
 import { loadConfig } from "./config.ts";
 import { checkDatabase, createPool } from "./db.ts";
 import { DevIdentityProvider, type IdentityProvider, type Principal } from "./identity.ts";
+import { ClaudeAgentProvider } from "./agent/claude-agent.ts";
+import { AGENT_NAMES } from "./agent/identity.ts";
+import { AgentGateway, AgentRegistry, registerAgentRoutes } from "./realtime/agent.ts";
 import { createDocStore } from "./realtime/docstore.ts";
 import { RealtimeGateway } from "./realtime/gateway.ts";
 import { TerminalGateway, TerminalOpenError, TerminalRegistry } from "./realtime/terminal.ts";
+import { BrokerSidecars } from "./sandbox/broker-sidecar.ts";
 import { isSandboxError } from "./sandbox/errors.ts";
 import { WorkspaceSandboxes } from "./sandbox/orchestrator.ts";
 
@@ -84,14 +88,76 @@ async function main(): Promise<void> {
     allowedOrigins: config.corsOrigins,
   });
 
+  // --- M3: broker sidecar + agent sessions --------------------------------
+
+  /**
+   * The process that holds the provider credential (SECURITY.md D1).
+   *
+   * One container per workspace, on the same `--internal` bridge the workspace
+   * sits on, reached by Docker's embedded DNS. It is constructed here rather
+   * than inside the registry because minting a capability is an orchestration
+   * decision: nothing in the realtime layer can invent one, and nothing below
+   * this line ever sees `config.broker.upstreamCredential`.
+   */
+  const broker = new BrokerSidecars({
+    log: app.log,
+    dockerSocket: config.dockerSocket,
+    image: config.broker.image,
+    port: config.broker.port,
+    upstreamOrigin: config.broker.upstreamOrigin,
+    upstreamCredential: config.broker.upstreamCredential,
+    sessionTokenBudget: config.broker.sessionTokenBudget,
+    upstreamNeedsEgress: config.broker.upstreamNeedsEgress,
+    tokenTtlMs: config.broker.tokenTtlMs,
+  });
+
+  /**
+   * The harness. Like the terminal registry, it may only LOOK a sandbox up:
+   * `sandboxes` is passed as a `SandboxLocator`, so an agent cannot bring a
+   * container into being — only the authorized route below can.
+   */
+  const agentProvider = new ClaudeAgentProvider({
+    sandboxes,
+    log: app.log,
+    maxSessionsPerWorkspace: config.agent.maxAgentsPerWorkspace,
+  });
+
+  const agents = new AgentRegistry({
+    sandboxes,
+    provider: agentProvider,
+    broker,
+    log: app.log,
+    // Model ids, ceilings and the tool policy come from config, never from a
+    // literal here and never defaulted inside the registry (PLAN.md §10.0).
+    models: config.agent.models,
+    limits: config.agent.limits,
+    tools: config.agent.tools,
+    systemPromptAppend: config.agent.systemPromptAppend,
+    maxAgentsPerWorkspace: config.agent.maxAgentsPerWorkspace,
+    // One roster (agent/identity.ts), not two. Names and colours are
+    // server-assigned and immutable: an agent that could name itself could
+    // impersonate a teammate in the presence list.
+    names: AGENT_NAMES,
+    // No `gate` in M3b: the advisory claim gate is M4's, and the authoritative
+    // half is its overlayfs merge outside the container (D5, T7).
+  });
+
+  const agentGateway = new AgentGateway({
+    identity,
+    registry: agents,
+    log: app.log,
+    allowedOrigins: config.corsOrigins,
+  });
+
   /**
    * ONE upgrade dispatcher.
    *
    * Node emits `upgrade` to every listener, so a gateway that rejects paths it
-   * does not own destroys the other gateway's sockets. Both gateways therefore
-   * claim-or-decline, and the final reject lives here, once.
+   * does not own destroys the other gateway's sockets. Every gateway therefore
+   * claim-or-declines, and the final reject lives here, once.
    */
   app.server.on("upgrade", (req, socket, head) => {
+    if (agentGateway.handleUpgrade(req, socket, head)) return;
     if (terminalGateway.handleUpgrade(req, socket, head)) return;
     if (gateway.handleUpgrade(req, socket, head)) return;
     socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -179,6 +245,15 @@ async function main(): Promise<void> {
     },
   );
 
+  /**
+   * `POST`/`DELETE`/`GET /api/workspaces/:id/agents`, behind the SAME
+   * `authorize` closure the terminal routes use — one implementation of the
+   * check, because two is how they drift. Starting an agent is code execution
+   * in the container (T8), so it lives on an authorized route and never on the
+   * wire.
+   */
+  registerAgentRoutes(app, { registry: agents, sandboxes, authorize, log: app.log });
+
   app.get("/api/health", async (): Promise<HealthResponse> => {
     const checks: HealthCheck[] = [await checkDatabase(pool)];
     checks.push({
@@ -217,6 +292,19 @@ async function main(): Promise<void> {
       status: "ok",
       detail: `${terminals.count} session(s), ${terminalGateway.socketCount} socket(s)`,
     });
+    // The credential's absence is reported rather than hidden, the same way
+    // `unenforced` is reported above: the agent transport is genuinely up, and
+    // what a reader needs to know is that a model call will be refused at the
+    // broker. Never the credential, the token, or a sidecar's name (T9).
+    checks.push({
+      name: "agents",
+      status: "ok",
+      detail:
+        `${agents.runningCount} running / ${agents.count} session(s), ` +
+        `${agentGateway.socketCount} socket(s) · ${agents.providerName} · ` +
+        `${broker.count} broker sidecar(s)` +
+        (broker.credentialConfigured ? "" : " · no upstream credential configured"),
+    });
 
     return {
       status: rollUp(checks),
@@ -230,6 +318,7 @@ async function main(): Promise<void> {
   await app.listen({ port: config.port, host: config.host });
   app.log.info(`realtime gateway on ws://${config.host}:${config.port}/rt`);
   app.log.info(`terminal gateway on ws://${config.host}:${config.port}${terminalGateway.path}`);
+  app.log.info(`agent gateway on ws://${config.host}:${config.port}${agentGateway.path}`);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "shutting down");
@@ -238,6 +327,16 @@ async function main(): Promise<void> {
     // CONTAINERS are deliberately left running: `create()` re-adopts them by
     // label on the next boot, and killing a build because the API process
     // restarted is what PLAN.md §6 exists to prevent.
+    //
+    // AGENT SESSIONS are the exception and MUST be stopped: the provider run
+    // lives in this process, and Docker has no "kill exec", so a harness left
+    // alive inside the container is unreachable forever. The broker sidecars go
+    // with them — their capability tokens existed only in this process's
+    // memory, so a survivor is a credential-holding container nothing can
+    // authenticate against.
+    await agentGateway.close();
+    await agents.closeAll();
+    await broker.closeAll();
     await terminalGateway.close();
     await terminals.closeAll();
     await gateway.close();

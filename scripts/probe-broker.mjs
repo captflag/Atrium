@@ -6,11 +6,17 @@
  * is forwarded when it should be stripped, looks exactly like success. So it is
  * asserted here rather than assumed.
  *
- * Stands up three containers on the `atrium-internal` network and checks what
- * each one can actually see:
+ * Stands up containers on the `atrium-internal` network and checks what each
+ * one can actually see:
  *
  *   workspace container  ->  broker sidecar  ->  upstream stub
  *   (no credential)          (holds the key)     (reports what it received)
+ *
+ * Twice over, because the two upstream shapes are not equivalent: one stub
+ * answers with a plain JSON object, and one streams SSE the way the Messages
+ * API does for `stream: true`. The token budget (T10) is the control the whole
+ * agent layer defers to, and it is only real if it holds for the second —
+ * which is the only shape a live agent ever produces.
  *
  * Uses a FAKE credential, so no real key is needed and none is at risk.
  *
@@ -58,14 +64,52 @@ createServer((req,res)=>{let b="";req.on("data",c=>b+=c);req.on("end",()=>{
   res.end(JSON.stringify({type:"message",usage:{input_tokens:1200,output_tokens:340}}));
 })}).listen(8901,"0.0.0.0",()=>process.stdout.write("stub listening\\n"));`;
 
-const CALL = (path, withToken) => `
-const r=require("http").request({host:"atrium-broker",port:8900,path:${JSON.stringify(path)},
+/**
+ * The response shape a REAL agent produces, and the one the budget has to hold
+ * against.
+ *
+ * The stub above answers with a single non-streaming JSON object — the one
+ * shape Claude Code never asks for. It called `stream: true`, so the body is
+ * SSE, and a broker that reads usage with `JSON.parse(body)` charges exactly
+ * nothing for it: the ledger stays at zero, `exhausted()` never becomes true,
+ * and the 429 below is unreachable. That bug passed every assertion in this
+ * file, which is why this stub exists.
+ *
+ * Same 1540 tokens per call as the JSON stub (1200 in + 340 out), so the same
+ * BUDGET makes the third call the one over the line.
+ */
+const SSE_STUB = `
+const {createServer}=require("http");
+const frame=(e,d)=>"event: "+e+"\\n"+"data: "+JSON.stringify(d)+"\\n\\n";
+createServer((req,res)=>{let b="";req.on("data",c=>b+=c);req.on("end",()=>{
+  process.stdout.write("SAW "+JSON.stringify({xApiKey:req.headers["x-api-key"]||null,
+    cap:req.headers["x-atrium-capability"]||null,path:req.url})+"\\n");
+  res.writeHead(200,{"content-type":"text/event-stream","cache-control":"no-cache"});
+  res.write(frame("message_start",{type:"message_start",
+    message:{id:"msg_probe",usage:{input_tokens:1200,output_tokens:1}}}));
+  res.write(frame("content_block_delta",{type:"content_block_delta",
+    delta:{type:"text_delta",text:"hello"}}));
+  res.write(frame("message_delta",{type:"message_delta",
+    delta:{stop_reason:"end_turn"},usage:{output_tokens:340}}));
+  res.write(frame("message_stop",{type:"message_stop"}));
+  res.end();
+})}).listen(8902,"0.0.0.0",()=>process.stdout.write("sse stub listening\\n"));`;
+
+const CALL = (path, withToken, host = "atrium-broker") => `
+const r=require("http").request({host:${JSON.stringify(host)},port:8900,path:${JSON.stringify(path)},
  method:"POST",headers:{"content-type":"application/json"${withToken ? `,"x-atrium-capability":${JSON.stringify(CAP)}` : ""}}},
  res=>{console.log(res.statusCode);res.resume();res.on("end",()=>process.exit(0))});
 r.on("error",e=>{console.log("ERR "+e.code);process.exit(0)});r.end("{}");`;
 
+/** Reads the broker's own ledger. `/healthz` is answered before the token gate. */
+const SPENT = (host) => `
+require("http").get({host:${JSON.stringify(host)},port:8900,path:"/healthz"},res=>{
+ let b="";res.on("data",c=>b+=c);res.on("end",()=>{
+  try{console.log(JSON.stringify(JSON.parse(b).spent))}catch{console.log("UNPARSEABLE")}
+  process.exit(0)})}).on("error",e=>{console.log("ERR "+e.code);process.exit(0)});`;
+
 function cleanup() {
-  quiet(["rm", "-f", "upstream-stub", "atrium-broker"]);
+  quiet(["rm", "-f", "upstream-stub", "atrium-broker", "upstream-sse-stub", "atrium-broker-sse"]);
 }
 
 async function main() {
@@ -134,6 +178,58 @@ async function main() {
   const third = inWorkspace(CALL("/v1/messages", true));
   second === "200" ? ok("second call within budget") : bad("second call within budget", second);
   third === "429" ? ok("call past the budget ceiling is refused") : bad("call past the budget ceiling is refused", third);
+
+  // ------------------------------------------------------------------------
+  // The same ceiling, against the response shape a real agent actually gets.
+  // Everything above this line passed while the ledger was charging zero for
+  // streamed traffic, i.e. for 100% of agent traffic.
+  // ------------------------------------------------------------------------
+  console.log("\n=== the budget holds for STREAMING responses (what agents produce) ===");
+
+  docker(["run", "-d", "--name", "upstream-sse-stub", "--network", NET,
+    "-e", `STUB=${Buffer.from(SSE_STUB).toString("base64")}`,
+    "node:22-alpine", "node", "-e",
+    'eval(Buffer.from(process.env.STUB,"base64").toString("utf8"))']);
+
+  docker(["run", "-d", "--name", "atrium-broker-sse", "--network", NET,
+    "--user", "10002:10002", "--read-only", "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "-e", "ATRIUM_UPSTREAM_ORIGIN=http://upstream-sse-stub:8902",
+    "-e", `ATRIUM_UPSTREAM_API_KEY=${FAKE_KEY}`,
+    "-e", `ATRIUM_CAPABILITY_TOKEN=${CAP}`,
+    "-e", `ATRIUM_SESSION_TOKEN_BUDGET=${BUDGET}`,
+    "atrium/broker:m3"]);
+
+  await sleep(4000);
+  if (!quiet(["logs", "atrium-broker-sse"]).includes("broker listening")) {
+    bad("streaming broker started", quiet(["logs", "atrium-broker-sse"]).split("\n").slice(-3).join(" | "));
+  } else {
+    ok("streaming broker started");
+
+    const before = inWorkspace(SPENT("atrium-broker-sse"));
+    const s1 = inWorkspace(CALL("/v1/messages", true, "atrium-broker-sse"));
+    s1 === "200" ? ok("streamed call is forwarded") : bad("streamed call is forwarded", s1);
+
+    // THE regression assertion. `spent` stayed at zero forever under a
+    // JSON-only parser, and every other check in this file still passed.
+    const after = inWorkspace(SPENT("atrium-broker-sse"));
+    let moved = false;
+    try {
+      const b = JSON.parse(before);
+      const a = JSON.parse(after);
+      moved = a.inputTokens > b.inputTokens && a.outputTokens > b.outputTokens;
+    } catch { moved = false; }
+    moved
+      ? ok("ledger CHARGED the streamed response", `${before} -> ${after}`)
+      : bad("ledger CHARGED the streamed response", `${before} -> ${after}`);
+
+    const s2 = inWorkspace(CALL("/v1/messages", true, "atrium-broker-sse"));
+    const s3 = inWorkspace(CALL("/v1/messages", true, "atrium-broker-sse"));
+    s2 === "200" ? ok("second streamed call within budget") : bad("second streamed call within budget", s2);
+    s3 === "429"
+      ? ok("streamed call past the budget ceiling is refused")
+      : bad("streamed call past the budget ceiling is refused", s3);
+  }
 
   console.log(`\n${fail === 0 ? "ALL CHECKS PASSED" : "FAILURES PRESENT"}  (${pass} passed, ${fail} failed)`);
   process.exitCode = fail === 0 ? 0 : 1;

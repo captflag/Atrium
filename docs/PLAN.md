@@ -328,9 +328,15 @@ The broker ships **zero npm dependencies** on purpose — it is the process that
 
 **What M3a still owes:** one live call against the real API. That needs an Anthropic key, which the project does not have. Nothing else blocks — set `ATRIUM_UPSTREAM_API_KEY` on the broker and point `ATRIUM_UPSTREAM_ORIGIN` at `https://api.anthropic.com`. Until then the boundary is proven and the model call is not.
 
-**M3b — integration (2 weeks).** `AgentProvider` implemented for the winner, running inside the container and bound to an agent pane. Streaming transcript with tool calls rendered. Interrupt/stop. BYO credentials, held by the host-side broker and never present in the container *(D1)*.
+**M3b — integration (2 weeks) — DONE.** `AgentProvider` implemented for the winner, running inside the container and bound to an agent pane. Streaming transcript with tool calls rendered. Interrupt/stop. BYO credentials, held by the broker sidecar and never present in the container *(D1)*.
 
 **Done when:** you type a task into a pane and watch an agent modify the repo, with a colleague watching live — and swapping to a second `AgentProvider` implementation is a config change, not a refactor.
+
+**Status 2026-09-04. Verified by `scripts/probe-agent.mjs` — 53/53**, against a stub upstream and a *fake* credential, plus a live two-pane check in a browser. The SDK runs inside the workspace container (`apps/agent-runner`, the only package that may import it) and reaches the model only through the broker; its output becomes contract `AgentEvent`s; the credential is asserted absent from `/proc/*/environ`, `HOME`, `/tmp` and `/workspace` and asserted *present* in the sidecar, so the boundary is proven from both sides. On the wired path: the authorized route starts an agent and a POST without a task can only look one up; two viewers hold an identical, gap-free transcript; a late joiner replays from seq 1; a member of another workspace gets `not-found`; the session survives every viewer leaving; DELETE leaves no orphaned runner; and DELETE-then-POST restarts the same pane's agent. M0–M3a do not regress (`probe-terminal` 18/18, `probe-broker` 9/9).
+
+**The broker is a sidecar per workspace**, started by the orchestrator on `atrium-internal` and named by a hash of the workspace id, so "workspace-scoped capability token" is structural rather than a comment: a token is only accepted by the process that minted it, and `ATRIUM_SESSION_TOKEN_BUDGET` is a real per-workspace ceiling. It is the one container in the design with egress, because the workspace bridge deliberately has none.
+
+**What M3b does not prove**, beyond M3a's outstanding live call: with no `ATRIUM_UPSTREAM_API_KEY` the broker answers `503`, which the SDK treats as retryable — so a pane on an unconfigured install reads `running` until the turn timeout rather than saying "no credential". The `agents` line of `/api/health` says so plainly; the pane does not yet.
 
 ### M4 — Claims (2 weeks)
 Claim store, grant/heartbeat/release. Per-agent overlayfs mount and the server-side merge gate (§5 step 4) — this is the authoritative enforcement and the bulk of the work. Optional advisory hook if the M3a winner supports one. Conflict UI, claimed-path tinting in the file tree, per-agent diff view.
@@ -447,11 +453,10 @@ The Agent SDK spawns a Claude Code subprocess and takes an `env` option, which i
 
 ## 11. What to do next
 
-Every open decision is now closed. M0, M1 and M2 are done; M3a's broker is built and D1 is proven.
+Every open decision is now closed. M0, M1, M2 and M3b are done; D1 is proven from both sides.
 
-1. **M3b** — `AgentProvider` over the Claude Agent SDK, agent panes, streaming transcripts.
-2. **One live model call** to finish M3a. Needs an Anthropic key on the broker; nothing else blocks it.
-3. **M4** — claims. The milestone the project is judged on (§10 decision 5).
+1. **One live model call** to finish M3a. Needs an Anthropic key on the broker; nothing else blocks it — set `ATRIUM_UPSTREAM_API_KEY` and leave `ATRIUM_UPSTREAM_ORIGIN` at its default.
+2. **M4** — claims. The milestone the project is judged on (§10 decision 5). The advisory half of the protocol already has its seam: `AgentSpec.gate` is called on every tool use with the tool's declared paths, and a refusal already renders as `tool_result{status:"denied"}` in the pane. The authoritative half — the overlayfs merge gate outside the container — is the work.
 
 Security work is scheduled per milestone in [SECURITY.md](./SECURITY.md) §4 rather than deferred to a hardening pass. The M2 and M3 items in particular are cheap now and expensive later — container hardening means rebuilding the sandbox provider if retrofitted, and a key that leaks once has no second chance.
 

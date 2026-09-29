@@ -95,8 +95,39 @@ function open(uid, workspace = WORKSPACE, version = "1") {
   return state;
 }
 
+/**
+ * Create the terminal through the AUTHORIZED ROUTE, which is the only thing
+ * that can create one — the wire protocol below can attach and nothing more.
+ *
+ * The file's header has always claimed this happened; until now it did not, so
+ * every run after a server restart failed at "viewer A attaches" with
+ * `not-found` and read like an M2 regression rather than a missing fixture.
+ */
+async function ensureTerminal() {
+  const res = await fetch(`http://${HOST}/api/workspaces/${WORKSPACE}/terminals`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: ORIGIN },
+    body: JSON.stringify({ terminalId: TERMINAL }),
+  });
+  if (res.ok) {
+    const body = await res.json().catch(() => ({}));
+    ok("the authorized route created (or found) the terminal", `unenforced: ${(body.unenforced ?? []).join(",") || "none"}`);
+    return true;
+  }
+  const body = await res.text().catch(() => "");
+  bad("the authorized route created (or found) the terminal", `${res.status} ${body.slice(0, 200)}`);
+  return false;
+}
+
 async function main() {
-  console.log("=== upgrade authorization ===");
+  console.log("=== the terminal this probe attaches to ===");
+  if (!(await ensureTerminal())) {
+    console.log("\nFAILURES PRESENT — cannot attach to a terminal that was never created.");
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log("\n=== upgrade authorization ===");
   {
     const ws = new WebSocket(`ws://${HOST}/rt/terminal?workspace=${WORKSPACE}&v=1&uid=evil`, {
       origin: "http://evil.example",

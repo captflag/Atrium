@@ -4,16 +4,18 @@
  * PLAN.md §1: "everything later is a pane type". This is where that promise is
  * kept — the canvas renders `PaneView` for every pane and does not know which
  * kinds exist. A "terminal" pane hands off to `TerminalPane` (its own chrome,
- * an xterm body); everything else keeps M1's note behaviour, a plain textarea.
+ * an xterm body), an "agent" pane to `AgentPane` (a transcript and a composer);
+ * everything else keeps M1's note behaviour, a plain textarea.
  *
  * Unknown kinds fall through to the note body deliberately: `PANE_KINDS`
- * already declares agent/editor/preview and a member on a newer client can put
- * one in the shared document today. A pane that renders as an empty note is a
- * pane you can move and delete, which beats an exception in the canvas.
+ * already declares editor/preview and a member on a newer client can put one in
+ * the shared document today. A pane that renders as an empty note is a pane you
+ * can move and delete, which beats an exception in the canvas.
  */
 
 import type { Pane } from "@atrium/shared";
 import { NOTE_MAX_LENGTH } from "@atrium/shared";
+import { AgentPane } from "./AgentPane.tsx";
 import { TerminalPane } from "./TerminalPane.tsx";
 import { closeTerminal } from "./terminalApi.ts";
 
@@ -65,6 +67,29 @@ export function PaneView({
           void closeTerminal(workspaceId, pane.id);
           onDelete();
         }}
+      />
+    );
+  }
+
+  if (pane.kind === "agent") {
+    return (
+      <AgentPane
+        pane={pane}
+        workspaceId={workspaceId}
+        // Same mapping as the terminal above: the pane's id IS its agent id.
+        // Both satisfy /^[A-Za-z0-9_-]{1,64}$/ and every server lookup is
+        // scoped by workspace, so an id guessed from another workspace resolves
+        // to nothing. If agent ids are ever minted separately, that mapping is
+        // resolved server-side — never chosen by the client.
+        agentId={pane.id}
+        selected={selected}
+        onSelect={onSelect}
+        onStartMove={onStartMove}
+        onStartResize={onStartResize}
+        // Straight through, unlike the terminal branch: AgentPane calls
+        // `deleteAgent` itself before invoking this, so wrapping it here would
+        // send the DELETE twice.
+        onDelete={onDelete}
       />
     );
   }

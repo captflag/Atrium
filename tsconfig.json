@@ -8,6 +8,9 @@
       "path": "./apps/broker"
     },
     {
+      "path": "./apps/agent-runner"
+    },
+    {
       "path": "./apps/server"
     },
     {

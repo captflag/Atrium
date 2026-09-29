@@ -64,9 +64,59 @@ RUN addgroup -g 10001 atrium \
     && mkdir -p /workspace \
     && chown 10001:10001 /workspace /home/atrium
 
+# ---------------------------------------------------------------------------
+# The agent runner (M3b) — @atrium/agent-runner plus the Claude Agent SDK.
+# ---------------------------------------------------------------------------
+# BAKED IN, NOT MOUNTED, AND THAT IS NOT A PREFERENCE.
+#   The SDK ships its CLI as a ~210 MB per-platform NATIVE BINARY delivered
+#   through optionalDependencies, not as JavaScript. This base is alpine, so
+#   `process.report.getReport().header.glibcVersionRuntime` is undefined and the
+#   SDK's resolver prefers `…-linux-<arch>-musl`. The development host here is
+#   Windows and holds only `claude.exe`; a bind-mounted host node_modules would
+#   fail at spawn every single time, with the SDK's own error about a musl
+#   binary and a missing /lib/ld-musl loader. npm on alpine detects libc=musl
+#   and picks the right optional package, so the install has to happen HERE.
+#   (Cross-building on a glibc host: add --os=linux --cpu=x64 --libc=musl.)
+#
+# WHY /opt AND NOT /workspace
+#   /workspace is the repo bind mount and is writable by the agent. A runner
+#   living there is a runner a prompt-injected agent can rewrite before the next
+#   session starts (SECURITY.md T1). /opt is on the read-only root filesystem
+#   and is owned by root; uid 10001 can execute it and cannot touch it.
+#
+# WHY SOURCE AND NOT A BUILD
+#   The runner is TypeScript compiled by nobody: `erasableSyntaxOnly` is on
+#   repo-wide, so `node --experimental-strip-types` runs the source directly,
+#   the same way apps/server runs in dev. No compiler and no dist/ in the image.
+#
+# COST, STATED OUT LOUD
+#   This adds roughly 210 MB to the image. Re-pin the FROM digest deliberately
+#   when rebuilding; do not drop it (T12).
+COPY apps/agent-runner/package.json /opt/atrium-runner/package.json
+RUN cd /opt/atrium-runner \
+    # `@atrium/shared` is an npm-workspace link that does not exist inside this
+    # image, and the runner deliberately imports nothing from it at runtime
+    # (apps/agent-runner/src/protocol.ts resolves nothing). Strip it rather than
+    # vendoring a package the runner does not use. The SDK's version pin stays
+    # canonical in apps/agent-runner/package.json — it is not restated here.
+    && node -e 'const f="./package.json",fs=require("fs");const p=JSON.parse(fs.readFileSync(f,"utf8"));delete p.dependencies["@atrium/shared"];delete p.devDependencies;fs.writeFileSync(f,JSON.stringify(p,null,2))' \
+    && npm install --omit=dev --no-audit --no-fund \
+    && npm cache clean --force \
+    # Fail the BUILD, not the first agent session, if the native CLI is absent.
+    # A missing binary here surfaces at runtime as an unexplained spawn failure
+    # inside a container, which is the worst place to debug it.
+    && test -n "$(find /opt/atrium-runner/node_modules/@anthropic-ai -maxdepth 2 -name claude -type f -print -quit)" \
+    && chown -R root:root /opt/atrium-runner \
+    && chmod -R go-w /opt/atrium-runner
+COPY apps/agent-runner/src /opt/atrium-runner/src
+RUN chown -R root:root /opt/atrium-runner/src && chmod -R go-w /opt/atrium-runner/src
+
 # Drop every setuid/setgid bit in the image. `no-new-privileges` already stops
 # these from escalating, and cap-drop=ALL removes what they would need, but an
 # image with no setuid binaries at all is one fewer thing to reason about.
+#
+# Runs AFTER the npm install above on purpose: a dependency that ships a setuid
+# binary would otherwise slip in behind this sweep.
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
 
 ENV HOME=/home/atrium \

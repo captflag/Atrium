@@ -30,6 +30,7 @@ import { request as httpsRequest } from "node:https";
 import { timingSafeEqual } from "node:crypto";
 import { loadBrokerConfig, type BrokerConfig } from "./config.ts";
 import { BudgetLedger } from "./budget.ts";
+import { UsageScanner } from "./usage.ts";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 
@@ -87,25 +88,6 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json" });
   res.end(payload);
-}
-
-/**
- * Usage is read from the upstream response so the ledger reflects what was
- * actually billed, not what we guessed. Parsing failure is not fatal: a request
- * that cannot be accounted still happened, and is charged a conservative
- * estimate rather than zero.
- */
-function extractUsage(body: Buffer): { input: number; output: number } | null {
-  try {
-    const parsed = JSON.parse(body.toString("utf8")) as {
-      usage?: { input_tokens?: number; output_tokens?: number };
-    };
-    const u = parsed.usage;
-    if (!u) return null;
-    return { input: u.input_tokens ?? 0, output: u.output_tokens ?? 0 };
-  } catch {
-    return null;
-  }
 }
 
 function main(): void {
@@ -218,21 +200,29 @@ async function handle(
         headers,
       },
       (upRes) => {
-        const chunks: Buffer[] = [];
-        res.writeHead(upRes.statusCode ?? 502, upRes.headers);
+        // Accounted as it streams. The body is never buffered whole: an agent
+        // turn can stream for minutes, and holding it would be a leak as well
+        // as pointless — only the usage numbers are wanted.
+        const scanner = new UsageScanner();
+        const status = upRes.statusCode ?? 502;
+        res.writeHead(status, upRes.headers);
         upRes.on("data", (c: Buffer) => {
-          chunks.push(c);
+          scanner.push(c);
           res.write(c);
         });
         upRes.on("end", () => {
           res.end();
-          const usage = extractUsage(Buffer.concat(chunks));
-          if (usage) ledger.charge(usage.input, usage.output);
+          scanner.end();
+          // ALWAYS charged. `result` returns an estimate rather than zero for a
+          // 2xx it could not account, so no response shape buys free tokens.
+          const usage = scanner.result(status, body.length);
+          ledger.charge(usage.input, usage.output);
           log("forwarded", {
             path: url.pathname,
-            status: upRes.statusCode,
-            inputTokens: usage?.input ?? null,
-            outputTokens: usage?.output ?? null,
+            status,
+            usageSource: usage.source,
+            inputTokens: usage.input,
+            outputTokens: usage.output,
             spent: ledger.snapshot(),
           });
           resolve();
