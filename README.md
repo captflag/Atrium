@@ -2,7 +2,9 @@
 
 A shared cloud workspace where a team and multiple AI coding agents work on the same repository at once — an infinite canvas of live panes, with server-owned sessions that keep running after you close your laptop.
 
-**Status: M0, M1, M2 and M3 complete.** Next: M4 — the claim protocol. See [docs/PLAN.md](docs/PLAN.md) for the roadmap and [docs/SECURITY.md](docs/SECURITY.md) for the threat model.
+**Status: M0–M2 complete and verified. M3 built, not yet end-to-end verified.** Next: M4 — the claim protocol.
+
+M0–M2 and the M3a credential boundary are proven by the probes below (`probe-terminal` 18/18, `probe-broker` 14/14). `probe-agent.mjs` has not yet been observed green, so the agent layer is built and type-checked but not end-to-end verified. No live model call has ever run: development happens with no API key, so the credential boundary is proven with a fake credential against a stub upstream. See [docs/PLAN.md](docs/PLAN.md) for the roadmap and [docs/SECURITY.md](docs/SECURITY.md) for the threat model.
 
 ## Prerequisites
 
